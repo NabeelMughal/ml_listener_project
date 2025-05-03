@@ -1,9 +1,10 @@
 services:
-  - type: worker
-    name: firebase-ml-listener
+  - type: web
+    name: firebase-listener
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python firebase_listener.py
     envVars:
       - key: FIREBASE_KEY_JSON
-        value: YOUR_JSON_STRING   # Render panel mein set karna hoga as environment variable
+        fromDatabase: your_database_key_as_environment_variable
+    plan: free
