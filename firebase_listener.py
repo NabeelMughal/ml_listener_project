@@ -1,43 +1,66 @@
-import time
-import requests
-import threading
-import firebase_admin
-from firebase_admin import credentials, db
 import os
 import json
+import firebase_admin
+from firebase_admin import credentials, db
+import joblib
+import time
 
 # Load Firebase credentials from environment variable
-firebase_creds = json.loads(os.environ['FIREBASE_KEY_JSON'])
-cred = credentials.Certificate(firebase_creds)
+firebase_key_json = os.environ.get("FIREBASE_KEY_JSON")
 
+if not firebase_key_json:
+    raise ValueError("FIREBASE_KEY_JSON environment variable not set!")
+
+# Convert the JSON string to a dict
+firebase_creds_dict = json.loads(firebase_key_json)
+
+# Initialize Firebase app
+cred = credentials.Certificate(firebase_creds_dict)
 firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://energy-monitoring-and-tarif-default-rtdb.firebaseio.com/'
 })
 
-API_URL = "https://web-production-0ef71.up.railway.app/auto-shutoff"
+# Load the trained ML model
+model = joblib.load('model.pkl')
 
-active_timers = {}
+# Reference to root
+root_ref = db.reference('/')
 
-def handle_api_call(bulb_id):
-    print(f"[INFO] Bulb {bulb_id} turned ON. Hitting API...")
-    requests.get(API_URL)
-    print("[INFO] Waiting 2 minutes...")
-    time.sleep(120)
-    print(f"[INFO] Calling API again to shut off Bulb {bulb_id}")
-    requests.get(API_URL)
-    # Optional: reset timer
-    active_timers.pop(bulb_id, None)
+def listen_and_predict():
+    print("Listening to Firebase for changes...")
+    while True:
+        data = root_ref.get()
+        B1 = data.get("B1", 0)
+        B2 = data.get("B2", 0)
+        B3 = data.get("B3", 0)
 
-def listener(event):
-    data = event.data
-    path = event.path
-    if not isinstance(data, dict):  # single value changed
-        if data == 1:
-            bulb_id = path.strip("/")  # example: B1
-            if bulb_id not in active_timers:
-                thread = threading.Thread(target=handle_api_call, args=(bulb_id,))
-                thread.start()
-                active_timers[bulb_id] = thread
+        # Check if any bulb is ON
+        if B1 == 1 or B2 == 1 or B3 == 1:
+            print("Appliance ON detected. Running prediction...")
 
-ref = db.reference("/")  # or "/bulbs" if B1/B2/B3 are inside a 'bulbs' node
-ref.listen(listener)
+            # Create sample input for prediction (modify if needed)
+            input_data = [[B1, B2, B3]]  # Example: Update as per your model's expected input
+            prediction = model.predict(input_data)
+
+            print(f"Model Prediction: {prediction[0]}")
+
+            if prediction[0] == 1:
+                print("Auto shut-off triggered. Waiting 2 minutes...")
+                time.sleep(120)
+
+                # After 2 minutes, turn off all appliances
+                updates = {
+                    "B1": 0,
+                    "B2": 0,
+                    "B3": 0,
+                    "timeusage": None
+                }
+                root_ref.update(updates)
+                print("Appliances turned OFF via ML.")
+        else:
+            print("No appliance is ON.")
+
+        time.sleep(2)  # Check every 2 seconds
+
+if __name__ == "__main__":
+    listen_and_predict()
