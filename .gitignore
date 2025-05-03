@@ -1,0 +1,4 @@
+firebase_key.json
+.env
+*.pkl
+__pycache__/
