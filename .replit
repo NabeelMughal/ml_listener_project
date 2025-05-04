@@ -1,0 +1,6 @@
+run = "python3 firebase_listener.py"
+
+modules = ["python-3.11"]
+
+[nix]
+packages = ["glibcLocales"]
