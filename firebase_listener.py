@@ -1,61 +1,57 @@
+import time
+import requests
 import firebase_admin
 from firebase_admin import credentials, db
-import requests
-import time
-from datetime import datetime
+import os
+import json
 
-# Initialize Firebase
-cred = credentials.Certificate('firebase_key.json')
-firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://your-project-id.firebaseio.com/'  # <-- Replace this!
-})
+print("Firebase listener script started.\nLibraries imported.")
 
-# Your deployed ML API URL
-API_URL = "https://your-api-endpoint.onrender.com/auto-shutoff"  # <-- Replace this!
+# Load credentials from environment variable
+firebase_key = os.environ.get("FIREBASE_CREDENTIALS_JSON")
 
-# Function to turn off appliances
-def turn_off():
-    print("Turning off appliances...")
-    # Send POST request to ML API (to make prediction)
-    try:
-        res = requests.post(API_URL)
-        print("API response (OFF):", res.text)
-    except Exception as e:
-        print("Error calling API:", e)
+if firebase_key is None:
+    raise ValueError("FIREBASE_CREDENTIALS_JSON environment variable not set")
 
-    # Set Firebase B1, B2, B3 to 0 (OFF)
-    db.reference("B1").set(0)
-    db.reference("B2").set(0)
-    db.reference("B3").set(0)
+firebase_key_dict = json.loads(firebase_key)
 
-# Main loop
-already_triggered = False  # To prevent duplicate triggers
+cred = credentials.Certificate(firebase_key_dict)
+firebase_admin.initialize_app(
+    cred, {
+        'databaseURL':
+        'https://energy-monitoring-and-tarif-default-rtdb.firebaseio.com/'
+    })
+
+print("Firebase initialized successfully.")
+print("Listener loop started. Monitoring appliance states...")
+
+# Firebase reference to root (since B1, B2, B3 are at root)
+ref = db.reference('/')
 
 while True:
     try:
-        b1 = db.reference("B1").get()
-        b2 = db.reference("B2").get()
-        b3 = db.reference("B3").get()
+        data = ref.get()
 
-        if (b1 == 1 or b2 == 1 or b3 == 1) and not already_triggered:
-            print(f"Bulb ON detected at {datetime.now()}. Hitting API...")
+        if data is None:
+            print("❌ No data found at root. Waiting...")
+        else:
+            b1 = int(data.get("B1", 0))
+            b2 = int(data.get("B2", 0))
+            b3 = int(data.get("B3", 0))
 
-            # Call the ML API (bulb on logic)
-            try:
-                res = requests.post(API_URL)
-                print("API response (ON):", res.text)
-            except Exception as e:
-                print("Error calling API:", e)
+            print(f"Status check - B1: {b1}, B2: {b2}, B3: {b3}")
 
-            already_triggered = True  # Don't re-trigger during 2 min wait
-            time.sleep(120)  # Wait for 2 minutes
-
-            turn_off()  # Turn bulb OFF
-
-        elif b1 == 0 and b2 == 0 and b3 == 0:
-            already_triggered = False  # Reset flag if all OFF
+            if b1 == 1 or b2 == 1 or b3 == 1:
+                print("💡 One or more appliances are ON. Calling ML API...")
+                try:
+                    response = requests.get(
+                        "https://web-production-0ef71.up.railway.app/auto-shutoff"
+                    )
+                    print("✅ API response:", response.text)
+                except Exception as e:
+                    print("❌ Error calling API:", e)
 
     except Exception as e:
-        print("Error reading from Firebase:", e)
+        print("❌ Error fetching data from Firebase:", e)
 
-    time.sleep(1)  # Check every second
+    time.sleep(1)
